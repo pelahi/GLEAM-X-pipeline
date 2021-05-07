@@ -1,0 +1,259 @@
+#!/bin/bash -l
+
+pipeuser=PIPEUSER
+
+set -x
+
+base=BASEDIR
+nightlist=nightLIST
+ra=RAPOINT
+dec=DECPOINT
+mosaicdir=MOSAICDIR
+
+if [[ -z ${mosaicdir} ]]
+then
+    mosaicdir='mosaic'
+fi
+
+cd "${base}" || exit 1
+nights=($(sort "${nightlist}"))
+
+echo "Nights listed are ${nights}"
+
+#n=0
+#for obsnum in ${obss[@]}
+#do
+#   track_task.py start --jobid=${SLURM_JOBID} --taskid=$n --start_time=`date +%s`
+#   ((n+=1))
+#done
+
+taskid=${SLURM_ARRAY_TASK_ID}
+jobid=${SLURM_ARRAY_JOB_ID}
+
+freqs=(072-080MHz 072-103MHz 080-088MHz 088-095MHz 095-103MHz 103-111MHz 103-134MHz 111-118MHz
+118-126MHz 126-134MHz 139-147MHz 139-170MHz 147-154MHz 154-162MHz 162-170MHz 170-177MHz
+170-200MHz 177-185MHz 185-193MHz 193-200MHz 200-208MHz 200-231MHz 208-216MHz 216-223MHz
+223-231MHz)
+freq=${freqs[$SLURM_ARRAY_TASK_ID]}
+
+echo "jobid: ${jobid}"
+echo "taskid: ${taskid}"
+echo "subchan: ${freq}"
+
+# Define output mosaic name as the first part of the input text file
+outname="night_coadd-${freq}"
+
+for image in "" "_weights"; do 
+    if [ -e "${nightlist%.txt}_temp_${freq}${image}.txt" ]; then
+        rm "${nightlist%.txt}_temp_${freq}${image}.txt"
+    fi
+done
+
+# Create the image list -- use a temporary name for now
+tmp="${nightlist%.txt}_temp_${freq}.txt"
+tmp_weights="${nightlist%.txt}_temp_${freq}_weights.txt"
+
+for tmp_d in "${tmp}" "${tmp}\_bmaj" "${tmp}\_bmin" "${tmp}\_bpa" "${tmp}\_weights"; do
+    if [[ -e "${tmp_d}" ]]; then
+        echo "Removing temporary directory ${tmp_d}" && rm "${tmp_d}"
+    fi
+done
+
+used_nights=()
+
+for night in "${nights[@]}"
+do
+    nightimg="${night}/mosaic/*_${freq}\_ddmod.fits"
+    nightrms="${night}/mosaic/*_${freq}\_ddmod_rms.fits"
+    if [[ -e "${nightimg}" ]] && \
+       [[ -e "${nightrms}" ]]
+    then
+
+        echo "../${nightimg}" >> "${tmp}"
+    
+        # pass weight maps as a text file so the same weight maps can be used - not needed anymore
+        echo "../${nightrms}" >> "${tmp_weights}"
+        
+        racen=$(pyhead.py -p CRVAL1 "${nightimg}" | awk '{print $3}')
+        deccen=$(pyhead.py -p CRVAL2 "${nightimg}" | awk '{print $3}')
+        mid=$(pyhead.py -p CRVAL3 "${nightimg}" | awk '{print $3}')
+
+        # add obs that actually exist to list for later:
+        used_nights+=("${night}")
+
+    fi
+done
+
+# Also use this to define the list of images to be used
+#imagelist=${outname}.list
+imagelist="${outname}"
+# And the swarp template name
+template="${outname}.template"
+# And some temporary output and weight output maps
+weightout="${outname}_weight.fits"
+imageout="${outname}_temp"
+resampdir="./resamp_${freq}/"
+
+if [[ ! -d "${mosaicdir}" ]]
+then
+    mkdir "${mosaicdir}"
+fi
+
+# Move the temporary image list to the mosaic directory and rename
+mv "$tmp" "${mosaicdir}/${imagelist}.list"
+mv "$tmp_weights" "${mosaicdir}/${imagelist}.weights.list"
+cd mosaics/ || exit 1
+
+# Create a swarp template file for resampling
+cat "${GXBASE}"/mosaics/nightresamp.swarp.tmpl \
+    | sed "s;OUTIMAGE;${imageout}.fits;" \
+    | sed "s;OUTWEIGHT;${weightout};" \
+    | sed "s;WEIGHT_NAMES;${imagelist}.weights.list;" \
+    | sed "s;RESAMPDIR;${resampdir};" \
+    | sed "s;RACENT;${racen};" \
+    | sed "s;DECENT;${deccen};" > "${template}.resamp"
+
+if [[ ! -e ${outname}.fits ]] || [[ ! -e ${outname}_psfmap.fits ]]; then
+
+    if [ -e "${resampdir}" ]; then
+        rm -r "${resampdir}"
+    fi
+
+    mkdir "${resampdir}"
+
+    echo "Generating resampled images for for ${nightlist} subband ${freq}."
+    swarp -c "${template}.resamp" @"${imagelist}.list"
+    # resampled images should now appear in ./resamp
+
+    # remove the old lists for the pre-resampled images
+    # rm ${imagelist}.list
+    # rm ${imagelist}.weights.list
+
+    tmp_resamp=${imagelist}.list.resamp
+    tmp_bmaj=${tmp_resamp}_bmaj
+    tmp_bmin=${tmp_resamp}_bmin
+    tmp_bpa=${tmp_resamp}_bpa
+    tmp_weights=${imagelist}.weights.list.resamp
+
+    for night in "${used_nights[@]}"; do
+
+        # keep name the same for easier naming rather than append .resamp
+        echo "${resampdir}/${night}_${freq}.fits" >> "${tmp_resamp}"
+        
+        # create snapshot PSF on resampled image: 
+        # psf_projected.py new_image old_image
+        psf_projected.py \
+        "${resampdir}/${imageout}.fits" \
+        "../${night}/*_${freq}_ddmod.fits" 
+        
+        echo "${resampdir}/${imageout}_bmaj.fits" >> "${tmp_bmaj}"
+        echo "${resampdir}/${imageout}_bmin.fits" >> "${tmp_bmin}"
+        echo "${resampdir}/${imageout}_bpa.fits" >> "${tmp_bpa}"
+
+        # weight maps are automatically renamed to .weight.fits apparently...
+        echo "${resampdir}/${imageout}.weight.fits" >> "${tmp_weights}"
+
+    done
+
+    for image in "" "_bmaj" "_bmin" "_bpa"; do
+        
+        # fill in the co-addition template
+        cat "${GXBASE}/mosaics/nightcoadd.swarp.tmpl" \
+            | sed "s;OUTNAME;${imageout}${image};" \
+            | sed "s;WEIGHT_NAMES;${imagelist}.weights.list.resamp;" \
+            | sed "s;RACENT;${ra};" \
+            | sed "s;DECENT;${dec};" > "${template}${image}.coadd"
+
+        # we will rename the coadd.fits / coadd.weight.fits afterwards
+        echo "Generating mosaic ${outname}${image}.fits for ${nightlist} subband ${freq}."
+        swarp -c "${template}${image}.coadd" @"${imagelist}.list.resamp${image}"
+
+        if [[ -e "${imageout}${image}.fits" ]]
+        then
+            # will this ever trim something in one image but not in another? 
+            fits_trim.py "${imageout}${image}.fits" "${outname}${image}.fits"
+            if [[ -e ${outname}${image}.fits ]]
+            then
+                pyhead.py -u FREQ "${mid}" "${outname}${image}.fits"
+                rm "${imageout}${image}.fits"
+            else
+                echo "Could not generate mosaic ${outname}${image} for ${nightlist} subband ${freq}"
+                exit 1
+            fi
+        else
+            echo "Could not generate mosaic ${outname}${image} for ${nightlist} subband ${freq}"
+            exit 1
+        fi
+    done
+
+    # make PSF map and remove BMAJ, BMIN, BPA maps
+    psf_combine_axes.py "${outname}_bmaj.fits" \
+        "${outname}_bmin.fits" \
+        "${outname}_bpa.fits" \
+        -o "${outname}_psfmap.fits" \
+        --remove
+
+    rm -r "${resampdir}"
+    # keep only one weight image
+    rm "${imageout}_*.weight.fits"
+
+else
+    echo "Mosaic ${outname}.fits for ${nightlist} subband ${freq} already created."
+fi
+
+# Blur correction and final PSF generation
+if [[ ! -e "${outname}_ddmod.fits" ]] || [[ ! -e "${outname}_psf.fits" ]]; then
+    BANE --noclobber "${outname}.fits"
+
+    # To create the final PSF map that I will use later, run source-finding without any PSF input
+    if [[ ! -e "${outname}_comp.fits" ]]
+    then
+        aegean --seedclip=10 --maxsummits=5 --autoload --table="${outname}.fits" "${outname}.fits"
+    fi
+
+    # Generate a measured PSF map
+    if [[ ! -e "${outname}_psf.fits" ]]
+    then
+        psf_select.py --input="${outname}_comp.fits"
+        psf_create.py --input="${outname}_comp_psfcat.fits"
+    fi
+
+    # Run source-finding using the mosaicked PSF map as an input
+    if [[ ! -e "${outname}_projpsf_comp.fits" ]]
+    then
+        aegean --seedclip=10 --maxsummits=5 --autoload --table="${outname}_projpsf.fits" --psf="${outname}_psfmap.fits" "${outname}.fits"
+    fi
+
+    # Select sources and generate a new PSF map that has the right blur factor
+    if [[ ! -e "${outname}_projpsf_psf.fits" ]]
+    then
+        psf_select.py --input="${outname}_projpsf_comp.fits"
+        psf_create.py --input="${outname}_projpsf_comp_psfcat.fits"
+    fi
+
+    # Multiply by blur factor
+    if [[ ! -e "${outname}_ddmod.fits" ]]
+    then
+        dd_flux_mod.py "${outname}.fits" "${outname}_projpsf_psf.fits" "${outname}_ddmod.fits"
+    fi
+
+    # Rerun source-finding on blur-corrected map with measured PSF map
+    BANE --noclobber "${outname}_ddmod.fits"
+    if [[ ! -e "${outname}_ddmod_comp.fits" ]]
+    then
+        aegean --seedclip=4 --maxsummits=5 --autoload --table="${outname}_ddmod.fits" --psf="${outname}_psf.fits" "${outname}_ddmod.fits"
+    fi
+    # TODO: clean up intermediate files
+else
+    echo "Mosaic ${outname}_ddmod.fits for ${obslist} subband $subchan already created."
+fi
+
+if [[ -e ${outname}_ddmod.fits ]]
+then
+    echo "Mosaic successful!"
+    track_task.py finish_mosaic  --jobid="${jobid}" --taskid="${taskid}"  --finish_time="$(date +%s)"
+else
+    echo "Mosaic failed!"
+    track_task.py fail_mosaic  --jobid="${jobid}" --taskid="${taskid}"  --finish_time="$(date +%s)"
+    exit 1
+fi
