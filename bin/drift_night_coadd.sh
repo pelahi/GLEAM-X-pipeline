@@ -73,8 +73,8 @@ fi
 queue="-p ${GXSTANDARDQ}"
 base="${GXSCRATCH}/${project}"
 
-obss=($(sort $nightlist))
-listbase=$(basename "${obslist}")
+obss=($(sort "${nightlist}"))
+listbase=$(basename "${nightlist}")
 listbase=${listbase%%.*}
 script="${GXSCRIPT}/nightcoadd_${listbase}.sh"
 
