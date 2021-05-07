@@ -5,7 +5,7 @@ pipeuser=PIPEUSER
 set -x
 
 base=BASEDIR
-nightlist=nightLIST
+nightlist=NIGHTLIST
 ra=RAPOINT
 dec=DECPOINT
 mosaicdir=MOSAICDIR
@@ -63,8 +63,11 @@ used_nights=()
 
 for night in "${nights[@]}"
 do
-    nightimg="${night}/mosaic/*_${freq}\_ddmod.fits"
-    nightrms="${night}/mosaic/*_${freq}\_ddmod_rms.fits"
+    # nightimg="${night}/mosaic/*_${freq}\_ddmod.fits"
+    # nightrms="${night}/mosaic/*_${freq}\_ddmod_rms.fits"
+    nightimg="${night}/*_${freq}\_ddmod.fits"
+    nightrms="${night}/*_${freq}\_ddmod_rms.fits"
+    
     if [[ -e "${nightimg}" ]] && \
        [[ -e "${nightrms}" ]]
     then

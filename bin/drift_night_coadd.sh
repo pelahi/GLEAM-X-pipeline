@@ -78,7 +78,7 @@ listbase=$(basename "${obslist}")
 listbase=${listbase%%.*}
 script="${GXSCRIPT}/nightcoadd_${listbase}.sh"
 
-cat "${GXBASE}/templates/nightcoadd.tmpl" | sed -e "s:OBSLIST:${obslist}:g" \
+cat "${GXBASE}/templates/nightcoadd.tmpl" | sed -e "s:NIGHTLIST:${nightlist}:g" \
                                       -e "s:RAPOINT:${ra}:g" \
                                       -e "s:DECPOINT:${dec}:g" \
                                       -e "s:BASEDIR:${base}:g" \
