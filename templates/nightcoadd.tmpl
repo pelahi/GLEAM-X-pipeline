@@ -65,8 +65,8 @@ for night in "${nights[@]}"
 do
     # nightimg="${night}/mosaic/*_${freq}\_ddmod.fits"
     # nightrms="${night}/mosaic/*_${freq}\_ddmod_rms.fits"
-    nightimg="${night}/*_${freq}\_ddmod.fits"
-    nightrms="${night}/*_${freq}\_ddmod_rms.fits"
+    nightimg=$(ls "${night}"/*_"${freq}"_ddmod.fits)
+    nightrms=$(ls "${night}"/*_"${freq}"_ddmod_rms.fits)
     
     if [[ -e "${nightimg}" ]] && \
        [[ -e "${nightrms}" ]]
@@ -105,7 +105,7 @@ fi
 # Move the temporary image list to the mosaic directory and rename
 mv "$tmp" "${mosaicdir}/${imagelist}.list"
 mv "$tmp_weights" "${mosaicdir}/${imagelist}.weights.list"
-cd mosaics/ || exit 1
+cd "${mosaicdir}" || exit 1
 
 # Create a swarp template file for resampling
 cat "${GXBASE}"/mosaics/nightresamp.swarp.tmpl \
