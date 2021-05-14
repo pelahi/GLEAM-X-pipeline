@@ -60,7 +60,7 @@ for tmp_d in "${tmp}" "${tmp}\_bmaj" "${tmp}\_bmin" "${tmp}\_bpa" "${tmp}\_weigh
 done
 
 used_nights=()
-
+uid=0
 for night in "${nights[@]}"
 do
     # nightimg="${night}/mosaic/*_${freq}\_ddmod.fits"
@@ -71,6 +71,19 @@ do
     if [[ -e "${nightimg}" ]] && \
        [[ -e "${nightrms}" ]]
     then
+
+        # symlink to include a unique name in the filename, as night created from
+        # drift_mosaic.sh will likely have a name tha tis not unique across nights
+        # and swarp will create names that we will have issue with later
+        lnname=$(echo "${nightimg}" | sed -e "s|\(.*\)/|\1/${uid}_|")
+        ln -s "${nightimg}" "${lnname}"
+        nightimg="${lnname}"
+
+        lnname=$(echo "${nightrms}" | sed -e "s|\(.*\)/|\1/${uid}_|")
+        ln -s "${nightrms}" "${lnname}"
+        nightrms="${lnname}"
+
+        ((uid=uid+1))
 
         echo "../${nightimg}" >> "${tmp}"
     
