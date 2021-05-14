@@ -76,11 +76,13 @@ do
         # drift_mosaic.sh will likely have a name tha tis not unique across nights
         # and swarp will create names that we will have issue with later
         lnname=$(echo "${nightimg}" | sed -e "s|\(.*\)/|\1/${uid}_|")
-        ln -s "${nightimg}" "${lnname}"
+        # ln -s "${nightimg}" "${lnname}"
+        cp -v "${nightimg}" "${lnname}"
         nightimg="${lnname}"
 
         lnname=$(echo "${nightrms}" | sed -e "s|\(.*\)/|\1/${uid}_|")
-        ln -s "${nightrms}" "${lnname}"
+        # ln -s "${nightrms}" "${lnname}"
+        cp -v "${nightrms}" "${lnname}"
         nightrms="${lnname}"
 
         ((uid=uid+1))
