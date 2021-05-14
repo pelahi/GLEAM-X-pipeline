@@ -147,7 +147,7 @@ if [[ ! -e ${outname}.fits ]] || [[ ! -e ${outname}_psfmap.fits ]]; then
         # psf_projected.py new_image old_image
         psf_projected.py \
         "${resampdir}/${imageout}.fits" \
-        "../${night}/*_${freq}_ddmod.fits" 
+        ../"${night}"/*_"${freq}"_ddmod.fits 
         
         echo "${resampdir}/${imageout}_bmaj.fits" >> "${tmp_bmaj}"
         echo "${resampdir}/${imageout}_bmin.fits" >> "${tmp_bmin}"
