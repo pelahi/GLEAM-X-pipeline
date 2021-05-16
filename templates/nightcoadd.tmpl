@@ -20,13 +20,6 @@ nights=($(sort "${nightlist}"))
 
 echo "Nights listed are ${nights}"
 
-#n=0
-#for obsnum in ${obss[@]}
-#do
-#   track_task.py start --jobid=${SLURM_JOBID} --taskid=$n --start_time=`date +%s`
-#   ((n+=1))
-#done
-
 taskid=${SLURM_ARRAY_TASK_ID}
 jobid=${SLURM_ARRAY_JOB_ID}
 
@@ -52,6 +45,7 @@ done
 # Create the image list -- use a temporary name for now
 tmp="${nightlist%.txt}_temp_${freq}.txt"
 tmp_weights="${nightlist%.txt}_temp_${freq}_weights.txt"
+tmpimgdir="./temp_img_${freq}"
 
 for tmp_d in "${tmp}" "${tmp}\_bmaj" "${tmp}\_bmin" "${tmp}\_bpa" "${tmp}\_weights"; do
     if [[ -e "${tmp_d}" ]]; then
@@ -59,12 +53,28 @@ for tmp_d in "${tmp}" "${tmp}\_bmaj" "${tmp}\_bmin" "${tmp}\_bpa" "${tmp}\_weigh
     fi
 done
 
+tmpfiles="coaddnight_${freq}_copy_tmp.txt"
+if [[ -e "${tmpfiles}" ]]
+then
+    echo "Removing ${tmpfiles}" && rm "${tmpfiles}"
+
+fi
+
+if [[ ! -d "${mosaicdir}" ]]
+then
+    mkdir "${mosaicdir}"
+fi
+
+if [ -e "${tmpimgdir}" ]; then
+    rm -r "${tmpimgdir}"
+fi
+
+mkdir "${mosaicdir}/${tmpimgdir}"
+
 used_nights=()
 uid=0
 for night in "${nights[@]}"
 do
-    # nightimg="${night}/mosaic/*_${freq}\_ddmod.fits"
-    # nightrms="${night}/mosaic/*_${freq}\_ddmod_rms.fits"
     nightimg=$(ls "${night}"/*_"${freq}"_ddmod.fits)
     nightrms=$(ls "${night}"/*_"${freq}"_ddmod_rms.fits)
     
@@ -75,26 +85,31 @@ do
         # symlink to include a unique name in the filename, as night created from
         # drift_mosaic.sh will likely have a name tha tis not unique across nights
         # and swarp will create names that we will have issue with later
-        lnname=$(echo "${nightimg}" | sed -e "s|\(.*\)/|\1/${uid}_|")
-        # ln -s "${nightimg}" "${lnname}"
-        cp -v "${nightimg}" "${lnname}"
-        nightimg="${lnname}"
+        # swarp also does not like symlinks, it (aparently) has to be a file,
+        # hence the copy below
+        name=$(echo "${nightimg}" | sed -e "s|\(.*\)/|${uid}_coadd_|")
+        echo "Copying ${nightimg} to ${name}"
+        cp -v "${nightimg}" "${mosaicdir}/${tmpimgdir}/${name}"
+        nightimg="${tmpimgdir}/${name}"
+        echo "${nightimg}" >> "${tmpfiles}"
 
-        lnname=$(echo "${nightrms}" | sed -e "s|\(.*\)/|\1/${uid}_|")
-        # ln -s "${nightrms}" "${lnname}"
-        cp -v "${nightrms}" "${lnname}"
-        nightrms="${lnname}"
+        name=$(echo "${nightrms}" | sed -e "s|\(.*\)/|/${uid}_coadd_|")
+        echo "Copying ${nightrms} to ${name}"
+        cp -v "${nightrms}" "${mosaicdir}/${tmpimgdir}/${name}"
+        nightrms="${tmpimgdir}/${name}"
+        echo "${nightrms}" >> "${tmpfiles}"
 
         ((uid=uid+1))
 
-        echo "../${nightimg}" >> "${tmp}"
+        echo "${nightimg}" >> "${tmp}"
     
         # pass weight maps as a text file so the same weight maps can be used - not needed anymore
-        echo "../${nightrms}" >> "${tmp_weights}"
+        echo "${nightrms}" >> "${tmp_weights}"
         
-        racen=$(pyhead.py -p CRVAL1 "${nightimg}" | awk '{print $3}')
-        deccen=$(pyhead.py -p CRVAL2 "${nightimg}" | awk '{print $3}')
-        mid=$(pyhead.py -p CRVAL3 "${nightimg}" | awk '{print $3}')
+        racen=$(pyhead.py -p CRVAL1 "${mosaicdir}/${nightimg}" | awk '{print $3}')
+        deccen=$(pyhead.py -p CRVAL2 "${mosaicdir}/${nightimg}" | awk '{print $3}')
+        mid=$(pyhead.py -p CRVAL3 "${mosaicdir}/${nightimg}" | awk '{print $3}')
+        pyhead.py -p CRVAL3 "${mosaicdir}/${nightimg}" 
 
         # add obs that actually exist to list for later:
         used_nights+=("${night}")
@@ -108,14 +123,11 @@ imagelist="${outname}"
 # And the swarp template name
 template="${outname}.template"
 # And some temporary output and weight output maps
-weightout="${outname}_weight.fits"
-imageout="${outname}_temp"
-resampdir="./resamp_${freq}/"
-
-if [[ ! -d "${mosaicdir}" ]]
-then
-    mkdir "${mosaicdir}"
-fi
+# weightout="${outname}_weight.fits"
+weightout="${outname}_ddmod.weight.fits"
+# imageout="${outname}_temp"
+imageout="${outname}"
+resampdir="./resamp_${freq}"
 
 # Move the temporary image list to the mosaic directory and rename
 mv "$tmp" "${mosaicdir}/${imagelist}.list"
@@ -153,16 +165,20 @@ if [[ ! -e ${outname}.fits ]] || [[ ! -e ${outname}_psfmap.fits ]]; then
     tmp_bpa=${tmp_resamp}_bpa
     tmp_weights=${imagelist}.weights.list.resamp
 
-    for night in "${used_nights[@]}"; do
+    for origfile in $(ls ${tmpimgdir}/*ddmod.fits); do
+        echo "${origfile}" $(basename "${origfile}")
+
+        basefile=$(basename $origfile)
+        echo "Basefile name is ${basefile}"
 
         # keep name the same for easier naming rather than append .resamp
-        echo "${resampdir}/${night}_${freq}.fits" >> "${tmp_resamp}"
+        echo "${resampdir}/${basefile}" >> "${tmp_resamp}"
         
         # create snapshot PSF on resampled image: 
         # psf_projected.py new_image old_image
         psf_projected.py \
-        "${resampdir}/${imageout}.fits" \
-        ../"${night}"/*_"${freq}"_ddmod.fits 
+        "${resampdir}/${basefile}" \
+        "${tmpimgdir}"/"${basefile}" 
         
         echo "${resampdir}/${imageout}_bmaj.fits" >> "${tmp_bmaj}"
         echo "${resampdir}/${imageout}_bmin.fits" >> "${tmp_bmin}"
@@ -179,8 +195,8 @@ if [[ ! -e ${outname}.fits ]] || [[ ! -e ${outname}_psfmap.fits ]]; then
         cat "${GXBASE}/mosaics/nightcoadd.swarp.tmpl" \
             | sed "s;OUTNAME;${imageout}${image};" \
             | sed "s;WEIGHT_NAMES;${imagelist}.weights.list.resamp;" \
-            | sed "s;RACENT;${ra};" \
-            | sed "s;DECENT;${dec};" > "${template}${image}.coadd"
+            | sed "s;RACENT;${racen};" \
+            | sed "s;DECENT;${deccen};" > "${template}${image}.coadd"
 
         # we will rename the coadd.fits / coadd.weight.fits afterwards
         echo "Generating mosaic ${outname}${image}.fits for ${nightlist} subband ${freq}."
