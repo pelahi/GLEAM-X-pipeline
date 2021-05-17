@@ -35,6 +35,7 @@ scripts = [
     "gleam_x/bin/new_fk5_template.py",
     "gleam_x/bin/polyfit_snapshots.py",
     "gleam_x/bin/psf_combine_axes.py",
+    "gleam_x/bin/psf_combine_nights.py",
     "gleam_x/bin/psf_create.py",
     "gleam_x/bin/psf_projected.py",
     "gleam_x/bin/psf_select.py",
