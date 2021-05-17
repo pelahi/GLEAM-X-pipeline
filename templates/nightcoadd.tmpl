@@ -53,13 +53,6 @@ for tmp_d in "${tmp}" "${tmp}\_bmaj" "${tmp}\_bmin" "${tmp}\_bpa" "${tmp}\_weigh
     fi
 done
 
-tmpfiles="coaddnight_${freq}_copy_tmp.txt"
-if [[ -e "${tmpfiles}" ]]
-then
-    echo "Removing ${tmpfiles}" && rm "${tmpfiles}"
-
-fi
-
 if [[ ! -d "${mosaicdir}" ]]
 then
     mkdir "${mosaicdir}"
@@ -89,16 +82,14 @@ do
         # hence the copy below
         name=$(echo "${nightimg}" | sed -e "s|\(.*\)/|${uid}_coadd_|")
         echo "Copying ${nightimg} to ${name}"
-        cp -v "${nightimg}" "${mosaicdir}/${tmpimgdir}/${name}"
+        cp "${nightimg}" "${mosaicdir}/${tmpimgdir}/${name}"
         nightimg="${tmpimgdir}/${name}"
-        echo "${nightimg}" >> "${tmpfiles}"
-
-        name=$(echo "${nightrms}" | sed -e "s|\(.*\)/|/${uid}_coadd_|")
+        
+        name=$(echo "${nightrms}" | sed -e "s|\(.*\)/|${uid}_coadd_|")
         echo "Copying ${nightrms} to ${name}"
-        cp -v "${nightrms}" "${mosaicdir}/${tmpimgdir}/${name}"
+        cp "${nightrms}" "${mosaicdir}/${tmpimgdir}/${name}"
         nightrms="${tmpimgdir}/${name}"
-        echo "${nightrms}" >> "${tmpfiles}"
-
+        
         ((uid=uid+1))
 
         echo "${nightimg}" >> "${tmp}"
@@ -108,9 +99,10 @@ do
         
         racen=$(pyhead.py -p CRVAL1 "${mosaicdir}/${nightimg}" | awk '{print $3}')
         deccen=$(pyhead.py -p CRVAL2 "${mosaicdir}/${nightimg}" | awk '{print $3}')
+        
+        # This is coming out to None. Revisit. 
         mid=$(pyhead.py -p CRVAL3 "${mosaicdir}/${nightimg}" | awk '{print $3}')
-        pyhead.py -p CRVAL3 "${mosaicdir}/${nightimg}" 
-
+        
         # add obs that actually exist to list for later:
         used_nights+=("${night}")
 
@@ -123,10 +115,10 @@ imagelist="${outname}"
 # And the swarp template name
 template="${outname}.template"
 # And some temporary output and weight output maps
-# weightout="${outname}_weight.fits"
-weightout="${outname}_ddmod.weight.fits"
-# imageout="${outname}_temp"
-imageout="${outname}"
+weightout="${outname}_weight.fits"
+# weightout="${outname}_ddmod.weight.fits"
+imageout="${outname}_temp"
+# imageout="${outname}"
 resampdir="./resamp_${freq}"
 
 # Move the temporary image list to the mosaic directory and rename
@@ -155,10 +147,6 @@ if [[ ! -e ${outname}.fits ]] || [[ ! -e ${outname}_psfmap.fits ]]; then
     swarp -c "${template}.resamp" @"${imagelist}.list"
     # resampled images should now appear in ./resamp
 
-    # remove the old lists for the pre-resampled images
-    # rm ${imagelist}.list
-    # rm ${imagelist}.weights.list
-
     tmp_resamp=${imagelist}.list.resamp
     tmp_bmaj=${tmp_resamp}_bmaj
     tmp_bmin=${tmp_resamp}_bmin
@@ -180,15 +168,17 @@ if [[ ! -e ${outname}.fits ]] || [[ ! -e ${outname}_psfmap.fits ]]; then
         "${resampdir}/${basefile}" \
         "${tmpimgdir}"/"${basefile}" 
         
-        echo "${resampdir}/${imageout}_bmaj.fits" >> "${tmp_bmaj}"
-        echo "${resampdir}/${imageout}_bmin.fits" >> "${tmp_bmin}"
-        echo "${resampdir}/${imageout}_bpa.fits" >> "${tmp_bpa}"
+        echo "${resampdir}/${basefile/.fits/_bmaj.fits}" >> "${tmp_bmaj}"
+        echo "${resampdir}/${basefile/.fits/_bmin.fits}" >> "${tmp_bmin}"
+        echo "${resampdir}/${basefile/.fits/_bpa.fits}" >> "${tmp_bpa}"
 
         # weight maps are automatically renamed to .weight.fits apparently...
-        echo "${resampdir}/${imageout}.weight.fits" >> "${tmp_weights}"
+        echo "${resampdir}/${basefile/.fits/.weight.fits}" >> "${tmp_weights}"
 
     done
 
+    # TODO: The bmaj / bmin / bpa maps will be recreated from the psfproject files
+    # These will be the same file size as the coadded images
     for image in "" "_bmaj" "_bmin" "_bpa"; do
         
         # fill in the co-addition template
