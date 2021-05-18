@@ -6,7 +6,7 @@ import logging, warnings
 import matplotlib.pyplot as plt
 from astropy.io import fits
 from argparse import ArgumentParser
-from typing import Iterable
+from typing import Iterable, Tuple
 from astropy.wcs import WCS
 from astropy.nddata import Cutout2D
 from astropy.nddata.utils import NoOverlapError
@@ -16,11 +16,10 @@ from tqdm import tqdm
 warnings.simplefilter("ignore", category=AstropyWarning)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
 
-
-PLOT = True
+PLOT = False  # Was only used throughout debugging.
 
 
 def weighted_mean(maps: np.ndarray, weights: np.ndarray = None):
@@ -31,11 +30,12 @@ def weighted_mean(maps: np.ndarray, weights: np.ndarray = None):
         weights (bool, optional): Weight the mean by the inverse variance. Defaults to None.
     """
     logger.debug(f"weight_mean maps shape is {maps.shape}")
+    logger.info(f"Calculating weighted average...")
 
-    logger.info(f"Calculating weighted average")
     if weights is None:
         logger.info("No weights specific, assuming equal weights. ")
     data = np.average(maps, axis=0, weights=weights)
+
     logger.debug(f"weight_mean averaged shape is {data.shape}")
 
     return data
@@ -46,6 +46,7 @@ def calculate_weights(
     rmss: Iterable[str],
     nan_fill: float = np.nan,
     progress: bool = False,
+    box_size: Tuple[int, int] = (50, 50),
 ):
     """Calculate the weights for the provided RMS files
 
@@ -55,10 +56,12 @@ def calculate_weights(
     
     Keyword Args:
         nan_fill (float): Value to use when NaNs are found for the RMS std
+        box_size (tuple[int, int]): Box size in pixels to use when calculating the average RMS (Defaults: (50, 50))
     """
     weight_cube = []
     for psf, rms in zip(psfs, rmss):
-        logger.info(f"Calculating average RMS for {psf}")
+        logger.info(f"Calculating average RMS across {psf}")
+        logger.info(f"Box size for each sampling is {box_size}")
         with fits.open(psf) as psf_fits, fits.open(rms) as rms_fits:
 
             # psf fits images have (bmaj, bmin, bpa, blur) images. The first will do.
@@ -79,7 +82,7 @@ def calculate_weights(
                         rms_fits[0].data,
                         pos_sky,
                         wcs=rms_wcs,
-                        size=(50, 50),
+                        size=box_size,
                         fill_value=np.nan,
                         mode="partial",
                     )
@@ -125,6 +128,7 @@ def combine_psf_cubes(
     rmss: Iterable[str] = None,
     output: str = None,
     progress: bool = False,
+    box_size: Tuple[int, int] = (50, 50),
 ):
     """Combine the psf cubes.
 
@@ -135,11 +139,16 @@ def combine_psf_cubes(
         rmss (Iterable[str]): Paths to the rms files that are used to weight each cube (Defaults: None)
         output (str): If not NOne, sets the path to save the averaged PSF parameters to. The header of the first 'psfs' will be used. (Default: None)
         progress (bool): Display a progress bar when calculating the weights (Default: False)
+        box_size (tuple[int, int]): Box size in pixels to use when calculating the average RMS (Defaults: (50, 50))
     """
     weights = None
     if rmss is not None:
+        assert len(psfs) == len(
+            rmss
+        ), f"The number of psfs ({len(psfs)}) and rms ({len(rmss)}) maps do not match."
+
         # Output shape will be (nfiles, decpixs, rapixs)
-        weights = calculate_weights(psfs, rmss, progress=progress)
+        weights = calculate_weights(psfs, rmss, progress=progress, box_size=box_size)
         logger.debug(f"Computed weight shape is {weights.shape}")
 
     psf_fits = [fits.open(p) for p in psfs]
@@ -169,8 +178,17 @@ def combine_psf_cubes(
         fig.tight_layout()
         fig.savefig("psf_cube.png")
 
-    # In case function ever used outside of script
-    [f.close() for f in psf_fits]
+        if weights is not None:
+            sampling = np.sum(np.isfinite(weights), axis=0)
+
+            fig, ax = plt.subplots(1, 1)
+
+            cim = ax.imshow(sampling)
+            ax.set(title="Valid Pixels across field")
+
+            fig.colorbar(cim, label="Number of Valid Pixels")
+            fig.tight_layout()
+            fig.savefig("psf_sampling.png")
 
 
 if __name__ == "__main__":
@@ -200,6 +218,14 @@ if __name__ == "__main__":
         action="store_true",
         help="Displace a progress bar can calculating the weights",
     )
+    parser.add_argument(
+        "-b",
+        "--box-size",
+        nargs=2,
+        default=(50, 50),
+        type=int,
+        help="Box size, in pixels, to use for each measure of the RMS around a point in the PSF map",
+    )
 
     args = parser.parse_args()
 
@@ -213,6 +239,10 @@ if __name__ == "__main__":
         ), "The lengths of the supplied psf and rms files is not the same. "
 
     combine_psf_cubes(
-        args.psf, rmss=args.rms, output=args.output, progress=args.progress
+        args.psf,
+        rmss=args.rms,
+        output=args.output,
+        progress=args.progress,
+        box_size=args.box_size,
     )
 
