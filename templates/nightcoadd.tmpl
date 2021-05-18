@@ -45,6 +45,7 @@ done
 # Create the image list -- use a temporary name for now
 tmp="${nightlist%.txt}_temp_${freq}.txt"
 tmp_weights="${nightlist%.txt}_temp_${freq}_weights.txt"
+tmp_psfs="${nightlist%.txt}_temp_${freq}_psfs.txt"
 tmpimgdir="./temp_img_${freq}"
 
 for tmp_d in "${tmp}" "${tmp}\_bmaj" "${tmp}\_bmin" "${tmp}\_bpa" "${tmp}\_weights"; do
@@ -70,9 +71,11 @@ for night in "${nights[@]}"
 do
     nightimg=$(ls "${night}"/*_"${freq}"_ddmod.fits)
     nightrms=$(ls "${night}"/*_"${freq}"_ddmod_rms.fits)
+    nightpsf=$(ls "${night}"/*_"${freq}"_projpsf_psf.fits)
     
     if [[ -e "${nightimg}" ]] && \
-       [[ -e "${nightrms}" ]]
+       [[ -e "${nightrms}" ]] && \
+       [[ -e "${nightpsf}" ]]
     then
 
         # symlink to include a unique name in the filename, as night created from
@@ -90,12 +93,16 @@ do
         cp "${nightrms}" "${mosaicdir}/${tmpimgdir}/${name}"
         nightrms="${tmpimgdir}/${name}"
         
+        name=$(echo "${nightpsf}" | sed -e "s|\(.*\)/|${uid}_coadd_|")
+        echo "Copying ${nightpsf} to ${name}"
+        cp "${nightpsf}" "${mosaicdir}/${tmpimgdir}/${name}"
+        nightpsf="${tmpimgdir}/${name}"
+        
         ((uid=uid+1))
 
         echo "${nightimg}" >> "${tmp}"
-    
-        # pass weight maps as a text file so the same weight maps can be used - not needed anymore
         echo "${nightrms}" >> "${tmp_weights}"
+        echo "${nightpsf}" >> "${tmp_psfs}"
         
         racen=$(pyhead.py -p CRVAL1 "${mosaicdir}/${nightimg}" | awk '{print $3}')
         deccen=$(pyhead.py -p CRVAL2 "${mosaicdir}/${nightimg}" | awk '{print $3}')
@@ -124,6 +131,8 @@ resampdir="./resamp_${freq}"
 # Move the temporary image list to the mosaic directory and rename
 mv "$tmp" "${mosaicdir}/${imagelist}.list"
 mv "$tmp_weights" "${mosaicdir}/${imagelist}.weights.list"
+mv "$tmp_psfs" "${mosaicdir}/${imagelist}.projpsfs.list"
+
 cd "${mosaicdir}" || exit 1
 
 # Create a swarp template file for resampling
@@ -162,62 +171,48 @@ if [[ ! -e ${outname}.fits ]] || [[ ! -e ${outname}_psfmap.fits ]]; then
         # keep name the same for easier naming rather than append .resamp
         echo "${resampdir}/${basefile}" >> "${tmp_resamp}"
         
-        # create snapshot PSF on resampled image: 
-        # psf_projected.py new_image old_image
-        psf_projected.py \
-        "${resampdir}/${basefile}" \
-        "${tmpimgdir}"/"${basefile}" 
-        
-        echo "${resampdir}/${basefile/.fits/_bmaj.fits}" >> "${tmp_bmaj}"
-        echo "${resampdir}/${basefile/.fits/_bmin.fits}" >> "${tmp_bmin}"
-        echo "${resampdir}/${basefile/.fits/_bpa.fits}" >> "${tmp_bpa}"
-
         # weight maps are automatically renamed to .weight.fits apparently...
         echo "${resampdir}/${basefile/.fits/.weight.fits}" >> "${tmp_weights}"
 
     done
 
-    # TODO: The bmaj / bmin / bpa maps will be recreated from the psfproject files
-    # These will be the same file size as the coadded images
-    for image in "" "_bmaj" "_bmin" "_bpa"; do
         
-        # fill in the co-addition template
-        cat "${GXBASE}/mosaics/nightcoadd.swarp.tmpl" \
-            | sed "s;OUTNAME;${imageout}${image};" \
-            | sed "s;WEIGHT_NAMES;${imagelist}.weights.list.resamp;" \
-            | sed "s;RACENT;${racen};" \
-            | sed "s;DECENT;${deccen};" > "${template}${image}.coadd"
+    # fill in the co-addition template
+    cat "${GXBASE}/mosaics/nightcoadd.swarp.tmpl" \
+        | sed "s;OUTNAME;${imageout};" \
+        | sed "s;WEIGHT_NAMES;${imagelist}.weights.list.resamp;" \
+        | sed "s;RACENT;${racen};" \
+        | sed "s;DECENT;${deccen};" > "${template}.coadd"
 
-        # we will rename the coadd.fits / coadd.weight.fits afterwards
-        echo "Generating mosaic ${outname}${image}.fits for ${nightlist} subband ${freq}."
-        swarp -c "${template}${image}.coadd" @"${imagelist}.list.resamp${image}"
+    # we will rename the coadd.fits / coadd.weight.fits afterwards
+    echo "Generating mosaic ${outname}.fits for ${nightlist} subband ${freq}."
+    swarp -c "${template}.coadd" @"${imagelist}.list.resamp"
 
-        if [[ -e "${imageout}${image}.fits" ]]
+    if [[ -e "${imageout}.fits" ]]
+    then
+        # will this ever trim something in one image but not in another? 
+        fits_trim.py "${imageout}.fits" "${outname}.fits"
+        if [[ -e ${outname}.fits ]]
         then
-            # will this ever trim something in one image but not in another? 
-            fits_trim.py "${imageout}${image}.fits" "${outname}${image}.fits"
-            if [[ -e ${outname}${image}.fits ]]
-            then
-                pyhead.py -u FREQ "${mid}" "${outname}${image}.fits"
-                rm "${imageout}${image}.fits"
-            else
-                echo "Could not generate mosaic ${outname}${image} for ${nightlist} subband ${freq}"
-                exit 1
-            fi
+            pyhead.py -u FREQ "${mid}" "${outname}.fits"
+            rm "${imageout}${image}.fits"
         else
-            echo "Could not generate mosaic ${outname}${image} for ${nightlist} subband ${freq}"
+            echo "Could not generate mosaic ${outname} for ${nightlist} subband ${freq}"
             exit 1
         fi
-    done
+    else
+        echo "Could not generate mosaic ${outname} for ${nightlist} subband ${freq}"
+        exit 1
+    fi
 
-    # make PSF map and remove BMAJ, BMIN, BPA maps
-    psf_combine_axes.py "${outname}_bmaj.fits" \
-        "${outname}_bmin.fits" \
-        "${outname}_bpa.fits" \
-        -o "${outname}_psfmap.fits" \
-        --remove
+    psf_combine_nights.py \
+        --psf $(ls "${tmpimgdir}"/*"projpsf_psf.fits") \
+        --rms $(ls "${tmpimgdir}"/*"rms.fits") \
+        --output "${outname}_psfmap.fits"
+        
 
     rm -r "${resampdir}"
+    rm -r "${tempimgdir}"
     # keep only one weight image
     rm "${imageout}_*.weight.fits"
 
