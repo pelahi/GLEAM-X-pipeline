@@ -1,7 +1,6 @@
 #! /usr/bin/env python
 
 import logging
-from os import read
 import numpy as np
 import astropy.units as u
 from astropy.io import fits
