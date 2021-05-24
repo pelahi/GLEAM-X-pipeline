@@ -7,6 +7,7 @@ from glob import glob
 
 import numpy as np
 import astropy.units as u
+from astropy.wcs import WCS
 from astropy.io import fits
 from astropy.time import Time
 from astropy.coordinates import SkyCoord, match_coordinates_sky
@@ -16,6 +17,9 @@ from argparse import ArgumentParser
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
+
+
+EXTS = ["", "_bkg", "_rms", "_weight"]
 
 
 class FitsObseration:
@@ -200,6 +204,36 @@ def correct_night_comps(
         o.correct_table(dec_model, ra_model)
 
 
+def create_correction_screens(
+    obs: Iterable[FitsObseration],
+    dec_model: np.polynomial.Polynomial,
+    ra_model: np.polynomial.Polynomial,
+):
+    screens = {}
+    for o in obs:
+        for e in EXTS:
+            f = o.fitsname.replace(".fits", f"{e}.fits")
+            with fits.open(f, memmap=True) as curr_fits:
+                data_shape = curr_fits[0].data.shape
+                w = WCS(curr_fits[0].header).celestial
+
+                if data_shape in screens.keys():
+                    continue
+
+                idxs = np.indices(data_shape)
+                ra, dec = w.pixel_to_world(idxs)
+
+                corr = 10 ** dec_model(dec)
+
+                if ra_model is not None:
+                    ra = ra - o["RACEN"]
+                    corr *= 10 ** ra_model(ra)
+
+                screens[data_shape] = corr
+
+    return screens
+
+
 def derive_apply_spatial_corrections(
     filelist: str,
     ref_cata: str,
@@ -230,7 +264,9 @@ def derive_apply_spatial_corrections(
     if correct_all:
         correct_night_comps(obs, dec_model, ra_model)
 
-    # TODO: Apply corrections to all images
+        screens = create_correction_screens(obs, dec_model=dec_model, ra_model=ra_model)
+
+        # TODO: Apply corrections to all images
 
 
 if __name__ == "__main__":
