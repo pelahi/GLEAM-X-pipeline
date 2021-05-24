@@ -5,16 +5,54 @@ import os, logging
 from optparse import OptionParser
 from calplots.aocal import fromfile
 import numpy as np
+from pyrap import tables
 
-parser = OptionParser(usage = "usage: %prog inbinfile outbinfile refant" +
-"""
+parser = OptionParser(
+    usage="usage: %prog inbinfile outbinfile refant"
+    + """
 Divide through by phase of a single reference antenna
-""")
-parser.add_option("-v", "--verbose", action="count", default=0, dest="verbose", help="-v info, -vv debug")
-parser.add_option("--incremental", action="store_true", dest="incremental", help="incremental solution")
-parser.add_option("--preserve_xterms", action="store_true", dest="preserve_xterms", help="preserve cross-terms (default is to set them all to 0+0j)")
-parser.add_option("--xy", default=0., dest="xy", type=float, help="add this phase (in degrees) to the YY phases for all channels")
-parser.add_option("--dxy", default=0., dest="dxy", type=float, help="add this slope (in degrees per spectral channel) in xy_phase to all YY phases ")
+"""
+)
+parser.add_option(
+    "-v",
+    "--verbose",
+    action="count",
+    default=0,
+    dest="verbose",
+    help="-v info, -vv debug",
+)
+parser.add_option(
+    "--incremental",
+    action="store_true",
+    dest="incremental",
+    help="incremental solution",
+)
+parser.add_option(
+    "--preserve_xterms",
+    action="store_true",
+    dest="preserve_xterms",
+    help="preserve cross-terms (default is to set them all to 0+0j)",
+)
+parser.add_option(
+    "--xy",
+    default=0.0,
+    dest="xy",
+    type=float,
+    help="add this phase (in degrees) to the YY phases for all channels",
+)
+parser.add_option(
+    "--dxy",
+    default=0.0,
+    dest="dxy",
+    type=float,
+    help="add this slope (in degrees per hertz) in xy_phase to all YY phases ",
+)
+parser.add_options(
+    "--ms",
+    type=str,
+    default=None,
+    help="The measurement set the corresponds to the solutions file",
+)
 opts, args = parser.parse_args()
 
 if len(args) != 3:
@@ -32,10 +70,12 @@ if (opts.xy != 0.0 or opts.dxy != 0.0) and opts.preserve_xterms:
 
 ao = fromfile(infilename)
 
-ref_phasor = (ao[0, refant, ...]/np.abs(ao[0, refant, ...]))[np.newaxis, np.newaxis, ...]
+ref_phasor = (ao[0, refant, ...] / np.abs(ao[0, refant, ...]))[
+    np.newaxis, np.newaxis, ...
+]
 if opts.incremental:
     logging.warn("incremental solution untested!")
-    ao = ao / (ao*ref_phasor)
+    ao = ao / (ao * ref_phasor)
 else:
     ao = ao / ref_phasor
 
@@ -44,10 +84,23 @@ if not opts.preserve_xterms:
     ao[..., 1] = np.zeros(zshape, dtype=np.complex128)
     ao[..., 2] = np.zeros(zshape, dtype=np.complex128)
 if opts.xy != 0.0 or opts.dxy != 0.0:
+    assert opts.ms is not None, "A measurment set has not be specified"
+
+    tab = tables.table(f"{opts.ms}/SPECTRAL_WINDOW")
+    freqs = np.squeeze(np.array(tab.freqs))
+
+    print(
+        f"Frequencies have been read in, spanning {np.min(freqs)/1e6} to {np.max(freqs)/1e6} MHz. "
+    )
+
+    assert (
+        len(freqs) == ao.n_chan
+    ), f"Number of frequency solutions in the calibration file does not match the number of channels in {opts.ms}"
+
     xy_phasor0 = np.complex(np.cos(np.radians(opts.xy)), np.sin(np.radians(opts.xy)))
     xy_phasor1 = np.zeros((1, 1, ao.n_chan), dtype=np.complex128)
-    xy_phasor1.real += np.cos(np.radians(opts.dxy*np.arange(ao.n_chan))).reshape(1, 1, ao.n_chan)
-    xy_phasor1.imag += np.sin(np.radians(opts.dxy*np.arange(ao.n_chan))).reshape(1, 1, ao.n_chan)
-    ao[..., 3] = ao[..., 3]*xy_phasor0*xy_phasor1
+    xy_phasor1.real += np.cos(np.radians(opts.dxy * freqs)).reshape(1, 1, ao.n_chan)
+    xy_phasor1.imag += np.sin(np.radians(opts.dxy * freqs)).reshape(1, 1, ao.n_chan)
+    ao[..., 3] = ao[..., 3] * xy_phasor0 * xy_phasor1
 
 ao.tofile(outfilename)
