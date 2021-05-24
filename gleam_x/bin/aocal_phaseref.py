@@ -88,6 +88,7 @@ if opts.xy != 0.0 or opts.dxy != 0.0:
 
     tab = tables.table(f"{opts.ms}/SPECTRAL_WINDOW")
     freqs = np.squeeze(np.array(tab.freqs))
+    tab.close()
 
     print(
         f"Frequencies have been read in, spanning {np.min(freqs)/1e6} to {np.max(freqs)/1e6} MHz. "
