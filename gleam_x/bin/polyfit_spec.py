@@ -234,6 +234,11 @@ def create_correction_screens(
     return screens
 
 
+def apply_correction_screens(obs: Iterable[FitsObseration]):
+
+    pass
+
+
 def derive_apply_spatial_corrections(
     filelist: str,
     ref_cata: str,
