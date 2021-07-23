@@ -264,7 +264,7 @@ if [[ ! -e "${outname}_ddmod.fits" ]] || [[ ! -e "${outname}_psf.fits" ]]; then
     # Select sources and generate a new PSF map that has the right blur factor
     if [[ ! -e "${outname}_projpsf_psf.fits" ]]
     then
-        psf_select.py --input="${outname}_projpsf_comp.fits"
+        psf_select.py --input="${outname}_projpsf_comp.fits" --prefix "${outname}_${low}-${high}"
         psf_create.py --input="${outname}_projpsf_comp_psfcat.fits"
     fi
 
