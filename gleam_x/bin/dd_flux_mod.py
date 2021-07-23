@@ -64,7 +64,6 @@ for i in range(mosaic[0].data.shape[0]):
     indexes[i * j : (i + 1) * j] = idx
 
 # put ALL the pixels into our vectorized functions and minimise our overheads
-ra, dec = w.wcs_pix2world(indexes, 1).transpose()
 
 # Read in the PSF
 psf = fits.open(args.psf)
@@ -75,6 +74,7 @@ w_psf = wcs.WCS(psf[0].header, naxis=2)
 
 if args.old_method:
     # Apply the blur correction
+    ra, dec = w.wcs_pix2world(indexes, 1).transpose()
     k, l = w_psf.wcs_world2pix(ra, dec, 1)
     k_int = [int(np.floor(x)) for x in k]
     k_int = [x if (x >= 0) and (x <= 360) else 0 for x in k_int]
@@ -85,11 +85,12 @@ if args.old_method:
 else:
     stride = args.stride
     count = 0
-    blur_tmp = np.zeros(len(ra))
+    blur_tmp = np.zeros(len(indexes))
 
-    while count * stride < len(ra):
+    while count * stride < len(indexes):
         s = slice(count * stride, (count + 1) * stride)
-        k, l = w_psf.wcs_world2pix(ra[s], dec[s], 1)
+        ra, dec = w.wcs_pix2world(indexes[s], 1).transpose()
+        k, l = w_psf.wcs_world2pix(ra, dec, 1)
 
         # Testing this suggests it is 100x+ faster.
         k_int = np.floor(k).astype(np.int)
@@ -107,4 +108,4 @@ else:
     blur_corr = blur_tmp.reshape(mosaic[0].data.shape)
 
 mosaic[0].data *= blur_corr
-mosaic.writeto(args.output, clobber=True)
+mosaic.writeto(args.output, overwrite=True)
