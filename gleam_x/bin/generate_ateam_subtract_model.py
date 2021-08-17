@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from multiprocessing import Value
 import os
 from typing import Tuple, Any, Union, DefaultDict, List
 from collections import defaultdict
@@ -26,17 +27,18 @@ ALT = 377.0
 LOCATION = EarthLocation.from_geodetic(
     lat=LAT * u.deg, lon=LON * u.deg, height=ALT * u.m
 )
-
+DEFAULT_IMG_SIZE = 128  # only deal in pixels and square images
 MODEL_MODES = ["subtrmodel", "casa", "casaclean", "count", "wsclean"]
 
 # TODO: Make Source use and return proper units
 class Source:
-    def __init__(self, name, pos, flux, alpha, beta):
+    def __init__(self, name, pos, flux, alpha, beta, imsize=None):
         self.name = name
         self.pos = pos
         self.flux = flux
         self.alpha = alpha
         self.beta = beta
+        self.imsize = imsize
 
     def __repr__(self):
         return "{0} {1} {2} {3} {4} {5}".format(
@@ -79,9 +81,21 @@ def create_source(line: str) -> Union[None, Source]:
     if line[0] == "#":
         return None
 
-    name, ra, dec, s_nu, alpha, beta = line.split(",")
+    items = line.split(",")
+    if len(items) < 6:
+        raise ValueError(f"Not enough values to unpace: {line}")
+    name, ra, dec, s_nu, alpha, beta = items[:6]
 
-    return Source(name, SkyCoord(f"{ra} {dec}"), float(s_nu), float(alpha), float(beta))
+    imsize = items[6] if len(items) >= 7 else None
+
+    return Source(
+        name,
+        SkyCoord(f"{ra} {dec}"),
+        float(s_nu),
+        float(alpha),
+        float(beta),
+        imsize=imsize,
+    )
 
 
 def read_source_txt(path: str) -> Tuple[Source, ...]:
@@ -218,10 +232,11 @@ def casa_outlier_source(src: Source) -> str:
     Returns:
         str: An entry in the outlier file for tclean
     """
+    imsize = int(DEFAULT_IMG_SIZE if src.imsize is None else src.imsize)
     line = (
         f"#outlier {src.name}\n"
         f"imagename=outlier{src.name}\n"
-        f"imsize=[128,128] \n"
+        f"imsize=[{imsize},{imsize}] \n"
         f"phasecenter=J2000 {str(src.pos.ra.to_string(u.hour))} "
         f"{str(src.pos.dec.to_string(u.degree, alwayssign=True))} \n"
         "\n"
@@ -305,7 +320,8 @@ def casa_clean_source(
     outliers["phasecenter"].append(
         f"J2000 {str(src.pos.ra.to_string(u.hour))} {str(src.pos.dec.to_string(u.degree, alwayssign=True))}"
     )
-    outliers["imsize"].append(list(imsize))
+    imsize = int(DEFAULT_IMG_SIZE if src.imsize is None else src.imsize)
+    outliers["imsize"].append(list((imsize, imsize)))
 
     return outliers
 
@@ -344,10 +360,12 @@ def wsclean_script(
             )
             out.write(chg)
 
+            imsize_x, imsize_y = imsize
+
             spec_fit = "-join-channels -channels-out 64 -fit-spectral-pol 4"
             wsclean = (
                 f"wsclean "
-                f"-mgain 0.8 -abs-mem 30 -nmiter 10 -niter 100000 -size 128 128 -pol XXYY "
+                f"-mgain 0.8 -abs-mem 30 -nmiter 10 -niter 100000 -size {imsize_x} {imsize_y} -pol XXYY "
                 f"-data-column {datacolumn} -name {imagename} -scale 10arcsec "
                 f"-weight briggs 0.5  -auto-mask 3 -auto-threshold 1 "
                 f" {spec_fit} "
