@@ -125,11 +125,11 @@ fi
 # note that for testing I have used $MYGROUP 
 # env variable to write the sbatch and conf files 
 # This could be changed to GXSCRIPT directory 
-script_dir=$MYGROUP
+script_dir=$GXSCRIPT/
 conffile=${script_dir}/multi_prog.${project}.conf
 batchscript=${script_dir}/run_multi_prog.${project}.sbatch
 echo "# Config file for ${project}" > ${conffile}
-echo "#!/bin/bash" > ${batchfile}
+echo "#!/bin/bash" > ${batchscript}
 for taskid in $(seq ${numfiles})
 do
     curobsnum=$(head -n "${taskid}" "${obslist}" | tail -1)
@@ -139,20 +139,22 @@ do
     cat "${GXBASE}/templates/autocal.tmpl" | sed -e "s:OBSNUM:${curobsnum}:g" \
                                      -e "s:DATADIR:${datadir}:g" \
                                      -e "s:IONOTEST:${ion}:g" \
-                                     -e "s:PIPEUSER:${pipeuser}:g > ${stdoutfile} " > "${script}"
+                                     -e "s:PIPEUSER:${pipeuser}:g " > "${script}"
     chmod 755 "${script}"
     singularity_script="${GXSCRIPT}/singularity.autocal_${curobsnum}.sh" 
     # sbatch submissions need to start with a shebang
-    echo '#!/bin/bash' > ${singularity_script}.sh
-    echo "singularity run ${GXCONTAINER} ${script}" >> ${singularity_script}.sh
+    echo '#!/bin/bash' > ${singularity_script}
+    echo "singularity run ${GXCONTAINER} ${script} > ${stdoutfile} " >> ${singularity_script}
     chmod 755 ${singularity_script}
 
-    master_thread_id=$((${GXNCPULINE}*${taskid}))
+    master_thread_id=$((${GXNCPUS}*${taskid}))
     echo "${master_thread_id} ${singularity_script} ${runargs}" >> ${conffile}
 done 
 # submission 
 totalmem=$((${GXABSMEMORY}*${numfiles}))
-totalcpus=$((${GXNCPULINE}*${numfiles}))
+totalcpus=$((${GXNCPUS}*${numfiles}))
+output=${GXLOG}/slurm-${project}.o%A
+error=${GXLOG}/slurm-${project}.e%A
 # here adding requirements to single batch file 
 echo "#SBATCH --begin=now+5minutes " >> ${batchscript}
 echo "#SBATCH --export=ALL " >> ${batchscript}
@@ -163,9 +165,13 @@ echo "#SBATCH --output=${output} " >> ${batchscript}
 echo "#SBATCH --error=${error} " >> ${batchscript}
 echo "#SBATCH --ntasks=${totalcpus} " >> ${batchscript}
 echo "#SBATCH ${account} " >> ${batchscript}
-echo "#SBATCH ${GXTASKLINE} " >> ${batchscript}
-echo "#SBATCH ${depend} " >> ${batchscript}
 echo "#SBATCH ${queue} " >> ${batchscript}
+if [ ! -z ${depend} ]
+then 
+    echo "#SBATCH ${depend} " >> ${batchscript}
+fi 
+echo "srun --multi-prog ${conffile}" >> ${batchscript}
+
 
 # here following original code and constructing a submission string
 sub="sbatch "
@@ -178,12 +184,34 @@ sub+="--output=${output} "
 sub+="--error=${error} "
 sub+="--ntasks=${totalcpus} "
 sub+="${account} "
-sub+="${GXTASKLINE} "
 sub+="${depend} "
 sub+="${queue} "
 sub+="${batchfile} "
     
 echo ${sub}
+
+# for debubing purposes
+debuggin_scripts=1
+if [ -z ${debugging_scripts}]
+then
+    echo "Just testing script production" 
+    exit 1;
+fi
+
+#submit script 
+sbatch ${batchscript}
+echo "Submitted ${script} as ${jobid} . Follow progress here:"
+for taskid in $(seq ${numfiles})
+do
+
+    if [ "${GXTRACK}" = "track" ]
+    then
+        # record submission
+        ${GXCONTAINER} track_task.py queue --jobid="${jobid}" --taskid="${taskid}" --task='calibrate' --submission_time="$(date +%s)" --batch_file="${script}" \
+                            --obs_id="${obs}" --stderr="${obserror}" --stdout="${obsoutput}"
+    fi
+done
+
 
 # PJE: OLD CODE below
 
