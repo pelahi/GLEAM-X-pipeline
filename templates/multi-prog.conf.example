@@ -1,0 +1,36 @@
+###################################################################
+# srun multiple program configuration file
+# to be used with sbatch script that requests 48 cores and calls
+# srun --multi-prog multi-prog.conf.example
+# the file is organised as follows 
+# <thread_id> <program/script> <[args]> 
+# 
+# here run a bash script that sets appropriate
+# environment variables such as number of OpenMP threads
+# and a task id using the thread number via %t
+# because programs are OpenMP, OpenMP tasks should be offset
+# by the cumulative number of threads being used by previous tasks 
+#
+# thread ids can only be listed once but since multi-prog 
+# is unaware of how threads are bound by the programs it calls 
+# care must be taken when setting master threads and how treads 
+# are bound. This issue is somewhat mitigated if each program 
+# takes 1 thread or all the threads on a node. 
+#
+# It does mean that threads can be oversubscribed, 
+# as is highlighted here by a silly call to echo 
+#
+# Here we same script 3 different times with different args 
+# and echo. OpenMP footprint varies. First argument for script 
+# is number of threads, second is master thread id. 
+#
+# Note that each program is independent and so stdout and stderr 
+# should be handled by the script run explicitly with pipes
+###################################################################
+0               stf_omp_run.sh 24 %t 
+24              stf_omp_run.sh 2 %t 
+26              stf_omp_run.sh 22 %t
+1-23,25,27-47   echo "task %d running stf as a OMP thread"
+
+
+
