@@ -147,7 +147,7 @@ do
     singularity_script="${GXSCRIPT}/singularity.autocal_${curobsnum}.sh" 
     # sbatch submissions need to start with a shebang
     echo '#!/bin/bash' > ${singularity_script}
-    echo "singularity run ${GXCONTAINER} ${script} > ${stdoutfile} " >> ${singularity_script}
+    echo "singularity run ${GXCONTAINER} ${script} 1>${stdoutfile} 2>${stderrfile} " >> ${singularity_script}
     chmod 755 ${singularity_script}
 
     master_thread_id=$((${GXNCPUS}*${taskid}))
