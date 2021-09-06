@@ -1,8 +1,9 @@
-#! /bin/bash -l
+#!/bin/bash -l
 set -x
 
 #set runtime parameters
-cores=${GXNCPUS}
+cores=${GXNPCPUS}
+export OMP_NUM_THREADS=${GXNPCPUS}
 datadir=DATADIR
 pipeuser=PIPEUSER
 obsnum=OBSNUM

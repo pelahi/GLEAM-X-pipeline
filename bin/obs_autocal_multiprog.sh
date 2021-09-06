@@ -10,21 +10,13 @@
 
 usage()
 {
-# echo "obs_autocal.sh [-d dep] [-a account] [-t] obsnum
-#   -p project : project, no default
-#   -d dep     : job number for dependency (afterok)
-#   -i         : disable the ionospheric metric tests (default = False)
-#   -t         : test. Don't submit job, just make the batch file
-#                and then return the submission command
-#   obsnum     : the obsid to process, or a text file of obsids (newline separated). 
-#                A job-array task will be submitted to process the collection of obsids. " 1>&2;
-# exit 1;
 echo "obs_autocal.sh [-d dep] [-a account] [-t] obsnum
   -p project : project, no default
   -d dep     : job number for dependency (afterok)
   -i         : disable the ionospheric metric tests (default = False)
   -t         : test. Don't submit job, just make the batch file
                and then return the submission command
+  -g         : for debugging scripts, none submitted 
   file_of_obs: text file of obsids (newline separated). 
                A multi-prog slurm job script will be produced. 
                " 1>&2;
@@ -36,17 +28,18 @@ pipeuser=${GXUSER}
 dep=
 tst=
 ion=1
+debugging_scripts=0
 
 # parse args and set options
-while getopts ':tia:d:p:' OPTION
+while getopts ':tiag:d:p:' OPTION
 do
     case "$OPTION" in
 	d)
 	    dep=${OPTARG}
 	    ;;
-    a)
-        account=${OPTARG}
-        ;;
+	a)
+            account=${OPTARG}
+            ;;
 	p)
 	    project=${OPTARG}
 	    ;;
@@ -56,6 +49,9 @@ do
 	t)
 	    tst=1
 	    ;;
+	g)
+            debugging_scripts=1
+            ;;
 	? | : | h)
 	    usage
 	    ;;
@@ -63,8 +59,6 @@ do
 done
 # set the obsid to be the first non option
 shift  "$(($OPTIND -1))"
-# PJE: changing name of obsnum variable to obslist
-# obsnum=$1
 obslist=$1
 
 # if obsid or project are empty then just print help
@@ -78,16 +72,6 @@ then
     account="--account=${GXACCOUNT}"
 fi
 
-# # Establish job array options
-# if [[ -f ${obsnum} ]]
-# then
-#     numfiles=$(wc -l "${obsnum}" | awk '{print $1}')
-#     jobarray="--array=1-${numfiles}"
-# else
-#     numfiles=1
-#     jobarray=''
-# fi
-
 # if obs is not text file, exit
 if [ ! -f ${obslist} ]
 then 
@@ -100,16 +84,6 @@ numfiles=$(wc -l "${obslist}" | awk '{print $1}')
 queue="-p ${GXSTANDARDQ}"
 datadir="${GXSCRATCH}/$project"
 
-# set dependency
-# if [[ ! -z ${dep} ]]
-# then
-#     if [[ -f ${obsnum} ]]
-#     then
-#         depend="--dependency=aftercorr:${dep}"
-#     else
-#         depend="--dependency=afterok:${dep}"
-#     fi
-# fi
 # PJE: Not clear how to best set dependences
 # PJE: but if mult-prog grouping is acceptable
 # can simply add this to the batch script
@@ -119,12 +93,9 @@ then
 fi
 
 # PJE: Now here are major changes as idea is 
-# to generate a script wrapping the commands for 
+# Idea to generate a script wrapping the commands for 
 # each ob and then construct a multi-prog config
 # script listing each of these scripts 
-# note that for testing I have used $MYGROUP 
-# env variable to write the sbatch and conf files 
-# This could be changed to GXSCRIPT directory 
 script_dir=$GXSCRIPT/
 conffile=${script_dir}/multi_prog.${project}.conf
 batchscript=${script_dir}/run_multi_prog.${project}.sbatch
@@ -133,36 +104,39 @@ echo "#!/bin/bash" > ${batchscript}
 for taskid in $(seq ${numfiles})
 do
     curobsnum=$(head -n "${taskid}" "${obslist}" | tail -1)
-    script="${GXSCRIPT}/autocal_${curobsnum}.sh"
-    stdoutfile="${GXLOG}/autocal_${curobsnum}.stdout"
-    stderrfile="${GXLOG}/autocal_${curobsnum}.stderr"
+    script="${GXSCRIPT}/autocal_multiprog_${curobsnum}.sh"
+    stdoutfile="${GXLOG}/autocal_multiprog_${curobsnum}.stdout"
+    stderrfile="${GXLOG}/autocal_multiprog_${curobsnum}.stderr"
     # set the OMP_NUM_THREADS  
-    echo "export OMP_NUM_THREADS=${GXNCPUS}" >> ${script}
     cat "${GXBASE}/templates/autocal_multiprog.tmpl" | sed -e "s:OBSNUM:${curobsnum}:g" \
                                      -e "s:TASKID:${taskid}:g" \
                                      -e "s:DATADIR:${datadir}:g" \
                                      -e "s:IONOTEST:${ion}:g" \
                                      -e "s:PIPEUSER:${pipeuser}:g " >> "${script}"
     chmod 755 "${script}"
-    singularity_script="${GXSCRIPT}/singularity.autocal_${curobsnum}.sh" 
+    singularity_script="${GXSCRIPT}/singularity.autocal_multiprog_${curobsnum}.sh" 
     # sbatch submissions need to start with a shebang
     echo '#!/bin/bash' > ${singularity_script}
     echo "singularity run ${GXCONTAINER} ${script} 1>${stdoutfile} 2>${stderrfile} " >> ${singularity_script}
     chmod 755 ${singularity_script}
 
-    master_thread_id=$((${GXNCPUS}*${taskid}))
+    master_thread_id=$((${GXNPCPUS}*(${taskid}-1)))
     echo "${master_thread_id} ${singularity_script} ${runargs}" >> ${conffile}
+    idle_thread_start=$((${master_thread_id}+1))
+    idle_thread_end=$((${master_thread_id}+${GXNPCPUS}-1))
+    echo "${idle_thread_start}-${idle_thread_end} echo \"task %d running as a OMP/pthread\"" >> ${conffile}
 done 
 # submission 
 totalmem=$((${GXABSMEMORY}*${numfiles}))
-totalcpus=$((${GXNCPUS}*${numfiles}))
+totalcpus=$((${GXNPCPUS}*${numfiles}))
 output=${GXLOG}/slurm-${project}.o%A
 error=${GXLOG}/slurm-${project}.e%A
 # here adding requirements to single batch file 
 echo "#SBATCH --begin=now+5minutes " >> ${batchscript}
 echo "#SBATCH --export=ALL " >> ${batchscript}
 echo "#SBATCH --time=02:00:00 " >> ${batchscript}
-echo "#SBATCH --mem=${totalmem}G " >> ${batchscript}
+#echo "#SBATCH --mem=${totalmem}GB " >> ${batchscript}
+echo "#SBATCH --mem=${GXABSMEMORY}GB " >> ${batchscript}
 echo "#SBATCH -M ${GXCOMPUTER} " >> ${batchscript}
 echo "#SBATCH --output=${output} " >> ${batchscript}
 echo "#SBATCH --error=${error} " >> ${batchscript}
@@ -190,12 +164,10 @@ sub+="${account} "
 sub+="${depend} "
 sub+="${queue} "
 sub+="${batchfile} "
-    
-echo ${sub}
+#echo ${sub}
 
 # for debubing purposes
-debuggin_scripts=1
-if [ -z ${debugging_scripts}]
+if [ ${debugging_scripts} -eq 1 ]
 then
     echo "Just testing script production" 
     exit 1;
@@ -203,6 +175,7 @@ fi
 
 #submit script 
 sub="sbatch ${batchscript}"
+echo ${sub}
 jobid=($(${sub}))
 jobid=${jobid[3]}
 
