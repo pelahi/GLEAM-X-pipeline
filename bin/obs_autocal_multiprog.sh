@@ -11,37 +11,41 @@
 usage()
 {
 echo "obs_autocal.sh [-d dep] [-a account] [-t] obsnum
-  -p project : project, no default
-  -d dep     : job number for dependency (afterok)
-  -i         : disable the ionospheric metric tests (default = False)
-  -t         : test. Don't submit job, just make the batch file
-               and then return the submission command
-  -g         : for debugging scripts, none submitted 
-  file_of_obs: text file of obsids (newline separated). 
-               A multi-prog slurm job script will be produced. 
+  -p project  : project, no default
+  -s profile  : full path to gleam profile script file to source settings,
+                no default
+  -d dep      : job number for dependency (afterok)
+  -i          : disable the ionospheric metric tests (default = False)
+  -t          : test. Don't submit job, just make the batch file
+                and then return the submission command
+  -g          : for debugging scripts, none submitted 
+  file_of_obs : text file of obsids (newline separated). 
+                A multi-prog slurm job script will be produced. 
                " 1>&2;
 exit 1;
 }
 
 pipeuser=${GXUSER}
-
 dep=
 tst=
 ion=1
 debugging_scripts=0
 
 # parse args and set options
-while getopts ':tiag:d:p:' OPTION
+while getopts ':tiag:d:p:s:' OPTION
 do
     case "$OPTION" in
 	d)
 	    dep=${OPTARG}
 	    ;;
 	a)
-            account=${OPTARG}
-            ;;
+        account=${OPTARG}
+        ;;
 	p)
 	    project=${OPTARG}
+	    ;;
+	s)
+	    profile_script=${OPTARG}
 	    ;;
 	i)
 	    ion=
@@ -50,8 +54,8 @@ do
 	    tst=1
 	    ;;
 	g)
-            debugging_scripts=1
-            ;;
+        debugging_scripts=1
+        ;;
 	? | : | h)
 	    usage
 	    ;;
@@ -62,7 +66,7 @@ shift  "$(($OPTIND -1))"
 obslist=$1
 
 # if obsid or project are empty then just print help
-if [[ -z ${obslist} || -z ${project} ]]
+if [[ -z ${obslist} || -z ${project} || -z ${profile_script} ]]
 then
     usage
 fi
@@ -147,24 +151,16 @@ if [ ! -z ${depend} ]
 then 
     echo "#SBATCH ${depend} " >> ${batchscript}
 fi 
+echo "# load the singularity module " >> ${batchscript}
+echo "module singularity " >> ${batchscript}
+echo "source ${profile_script}" >> ${batchscript}
+if [ ${debugging_scripts} -eq 1 ]
+then
+    echo "echo \"Environment \"" >> ${batchscript}
+    echo "env" >> ${batchscript}
+    
+fi
 echo "srun --multi-prog ${conffile}" >> ${batchscript}
-
-
-# here following original code and constructing a submission string
-sub="sbatch "
-sub+="--begin=now+5minutes "
-sub+="--export=ALL "
-sub+="--time=02:00:00 "
-sub+="--mem=${totalmem}G "
-sub+="-M ${GXCOMPUTER} "
-sub+="--output=${output} "
-sub+="--error=${error} "
-sub+="--ntasks=${totalcpus} "
-sub+="${account} "
-sub+="${depend} "
-sub+="${queue} "
-sub+="${batchfile} "
-#echo ${sub}
 
 # for debubing purposes
 if [ ${debugging_scripts} -eq 1 ]
@@ -198,69 +194,3 @@ do
             --stdout="${stdoutfile}"
     fi
 done
-
-
-# PJE: OLD CODE below
-
-# script="${GXSCRIPT}/autocal_${obsnum}.sh"
-
-# cat "${GXBASE}/templates/autocal.tmpl" | sed -e "s:OBSNUM:${obsnum}:g" \
-#                                      -e "s:DATADIR:${datadir}:g" \
-#                                      -e "s:IONOTEST:${ion}:g" \
-#                                      -e "s:PIPEUSER:${pipeuser}:g" > "${script}"
-
-
-# output="${GXLOG}/autocal_${obsnum}.o%A"
-# error="${GXLOG}/autocal_${obsnum}.e%A"
-
-# if [[ -f ${obsnum} ]]
-# then
-#    output="${output}_%a"
-#    error="${error}_%a"
-# fi
-
-# chmod 755 "${script}"
-
-# # sbatch submissions need to start with a shebang
-# echo '#!/bin/bash' > ${script}.sbatch
-# echo "singularity run ${GXCONTAINER} ${script}" >> ${script}.sbatch
-
-# sub="sbatch --begin=now+5minutes --export=ALL  --time=02:00:00 --mem=${GXABSMEMORY}G -M ${GXCOMPUTER} --output=${output} --error=${error}"
-# sub="${sub} ${GXNCPULINE} ${account} ${GXTASKLINE} ${jobarray} ${depend} ${queue} ${script}.sbatch"
-# if [[ ! -z ${tst} ]]
-# then
-#     echo "script is ${script}"
-#     echo "submit via:"
-#     echo "${sub}"
-#     exit 0
-# fi
-
-# # submit job
-# jobid=($(${sub}))
-# jobid=${jobid[3]}
-
-# echo "Submitted ${script} as ${jobid} . Follow progress here:"
-
-# for taskid in $(seq ${numfiles})
-#     do
-#     # rename the err/output files as we now know the jobid
-#     obserror=$(echo "${error}" | sed -e "s/%A/${jobid}/" -e "s/%a/${taskid}/")
-#     obsoutput=$(echo "${output}" | sed -e "s/%A/${jobid}/" -e "s/%a/${taskid}/")
-
-#     if [[ -f ${obsnum} ]]
-#     then
-#         obs=$(sed -n -e "${taskid}"p "${obsnum}")
-#     else
-#         obs=$obsnum
-#     fi
-
-#     if [ "${GXTRACK}" = "track" ]
-#     then
-#         # record submission
-#         ${GXCONTAINER} track_task.py queue --jobid="${jobid}" --taskid="${taskid}" --task='calibrate' --submission_time="$(date +%s)" --batch_file="${script}" \
-#                             --obs_id="${obs}" --stderr="${obserror}" --stdout="${obsoutput}"
-#     fi
-
-#     echo "$obsoutput"
-#     echo "$obserror"
-# done
